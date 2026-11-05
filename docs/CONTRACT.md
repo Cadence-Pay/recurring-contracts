@@ -1,6 +1,6 @@
 # Contract reference
 
-**Audit status: this contract has not been audited.** Everything below describes what is implemented and covered by the test suite in `src/test.rs` (48 tests). The contract is not yet deployed (task 1.7).
+**Audit status: this contract has not been audited.** Everything below describes what is implemented and covered by the test suite in `src/test.rs` (48 tests). A build of this code was deployed to Stellar testnet and exercised end to end on 2026-11-05.
 
 Pull-based subscription billing. A merchant creates a plan. A subscriber pays the first period when subscribing and gives the contract a token allowance. After that, anyone can call `charge` once per period. This is not payment streaming: one discrete transfer per period.
 
@@ -100,13 +100,25 @@ Reads do not extend anything. A subscription that is charged each period stays a
 - Period: `MIN_PERIOD_SECS` = 60 to `MAX_PERIOD_SECS` = 365 days. The 60 s minimum is for quick rehearsals and should be reconsidered before a mainnet release.
 - Amount: `1..=i128::MAX`.
 - One charge per call, and at most one per period.
-- Fee and rent cost per call: **not measured yet.**
+- Fee and rent cost per call, measured on testnet on 2026-11-05 with `stellar contract invoke --cost`. Amounts are what was charged after refunds, in stroops (1 XLM = 10,000,000 stroops). Testnet network settings can differ from mainnet and can change, so re-measure before relying on these.
+
+  | Call | Fee charged (stroops) | About (XLM) | Note |
+  |---|---|---|---|
+  | deploy (13,246-byte wasm) | 14,858 | 0.0015 | one time |
+  | `create_plan` | 523,508 | 0.052 | mostly rent: two new entries kept for 90 days |
+  | `subscribe` | 508,738 | 0.051 | mostly rent: two new entries, plus the token transfer |
+  | `charge` | 10,873 | 0.0011 | one entry rewritten, plus the token transfer |
+  | `cancel` | 9,273 | 0.0009 | one entry rewritten |
+  | `approve` on the XLM token (for comparison) | 6,226 | 0.0006 | |
+
+  The rent part of `create_plan` and `subscribe` follows from the 90-day TTL policy above.
 
 ## What is not guaranteed
 
 - **Not audited.** No independent review has happened.
 - **The token is trusted.** The merchant picks the token of a plan. A token that misbehaves (blocks transfers, can freeze or claw back, charges fees) can break payments. Subscribers should only subscribe to plans with tokens they trust.
 - **Charging depends on a keeper.** If nobody calls `charge`, nobody is charged. The contract does not call itself.
+- **The allowance has a cap and an expiry, and the expiry itself is limited.** On testnet the token rejected an `approve` whose `live_until_ledger` was beyond the current ledger plus 3,110,400 (about 180 days at 5 s per ledger) and accepted values up to that. So a subscriber has to renew the allowance at least about every 6 months. A client can read the limit with `stellar network settings` (`max_entry_ttl`).
 - **The allowance is a cap with an expiry.** When it runs out, `charge` fails with `PaymentFailed` and the subscription stays `Active` with the same due time. Nothing on-chain records failures or retries them (a grace period is a planned extension, `WAVE-ISSUE(contracts-1)`).
 - **Cancel does not revoke the allowance.** The subscriber should also set the allowance to 0 at the token.
 - **No refunds, no proration, no trials, no plan changes, no plan edits.** The first period is paid at `subscribe` and is not returned on cancel.
