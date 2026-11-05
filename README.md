@@ -6,7 +6,9 @@ This is **not** payment streaming. It is one discrete charge per period.
 
 ## Status
 
-**Skeleton only.** The crate builds and has one placeholder function (`plan_count`, always 0). Plans, subscriptions, `charge` and `cancel` are not implemented yet.
+Implemented and covered by 48 unit tests: `create_plan`, `deactivate_plan`, `subscribe`, `charge`, `cancel` and the read functions. See [docs/CONTRACT.md](docs/CONTRACT.md) for functions, errors, events, storage, TTL policy, limits and what is not guaranteed.
+
+Not done yet: testnet deployment, fee and rent measurements, and any test against a live network or a real wallet.
 
 **Audit status: this contract has not been audited.**
 

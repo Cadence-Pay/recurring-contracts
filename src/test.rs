@@ -725,3 +725,187 @@ fn cancel_works_after_the_plan_is_deactivated() {
         SubStatus::Cancelled
     );
 }
+
+// ---- invariants (property-style) ----
+//
+// No random-testing crate is used. A small deterministic generator drives many different
+// sequences, and every sequence is checked against the same rules.
+
+/// Tiny deterministic pseudo-random generator (xorshift64).
+struct Rng(u64);
+
+impl Rng {
+    fn next(&mut self) -> u64 {
+        let mut x = self.0;
+        x ^= x << 13;
+        x ^= x >> 7;
+        x ^= x << 17;
+        self.0 = x;
+        x
+    }
+
+    fn below(&mut self, n: u64) -> u64 {
+        self.next() % n
+    }
+}
+
+const SEEDS: u64 = 10;
+const STEPS: u32 = 60;
+
+#[test]
+fn invariant_at_most_one_charge_per_period_and_charges_never_decrease() {
+    for seed in 1..=SEEDS {
+        let mut rng = Rng(seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1);
+        let s = Setup::new();
+        let sub_id = subscribed(&s, AMOUNT * 100_000);
+        s.fund(&s.subscriber, AMOUNT * 1_000);
+        let mut now = START_TS;
+        let mut last_charges = 0u32;
+        let mut successes = 0u64;
+
+        for _ in 0..STEPS {
+            // Move forward by 0..2.5 periods, then try to charge.
+            now += rng.below(PERIOD * 5 / 2 + 1);
+            set_time(&s, now);
+            let result = s.client().try_charge(&sub_id);
+            let sub = s.client().get_subscription(&sub_id);
+
+            // charges never decreases.
+            assert!(sub.charges >= last_charges, "seed {seed}");
+            match result {
+                Ok(_) => {
+                    successes += 1;
+                    assert_eq!(sub.charges, last_charges + 1, "seed {seed}");
+                    // The k-th charge can only happen once k whole periods have passed since
+                    // subscribing: at most one charge per period.
+                    assert!(
+                        u64::from(sub.charges) * PERIOD <= now - START_TS,
+                        "seed {seed}: {} charges after {} s",
+                        sub.charges,
+                        now - START_TS
+                    );
+                    // The next due time is always in the future after a charge.
+                    assert!(sub.next_charge_ts > now, "seed {seed}");
+                }
+                Err(e) => {
+                    assert_eq!(e, Ok(Error::NotDue), "seed {seed}");
+                    assert_eq!(sub.charges, last_charges, "seed {seed}");
+                    assert!(now < sub.next_charge_ts, "seed {seed}");
+                }
+            }
+            last_charges = sub.charges;
+        }
+
+        // Money matches: first period plus one payment per successful charge.
+        assert_eq!(
+            s.token_client().balance(&s.merchant),
+            AMOUNT * (1 + successes as i128),
+            "seed {seed}"
+        );
+    }
+}
+
+#[test]
+fn invariant_a_cancelled_subscription_is_never_charged() {
+    for seed in 1..=SEEDS {
+        let mut rng = Rng(seed.wrapping_mul(0xD1B5_4A32_D192_ED03) | 1);
+        let s = Setup::new();
+        let sub_id = subscribed(&s, AMOUNT * 100_000);
+        s.fund(&s.subscriber, AMOUNT * 1_000);
+        let mut now = START_TS;
+        let cancel_at = 1 + rng.below(40);
+
+        for step in 0..STEPS {
+            now += rng.below(PERIOD * 2 + 1);
+            set_time(&s, now);
+            if u64::from(step) == cancel_at {
+                s.client().cancel(&s.subscriber, &sub_id);
+            }
+            let before = s.client().get_subscription(&sub_id);
+            let result = s.client().try_charge(&sub_id);
+            if before.status == SubStatus::Cancelled {
+                assert_eq!(result, Err(Ok(Error::NotActive)), "seed {seed}");
+                assert_eq!(s.client().get_subscription(&sub_id), before, "seed {seed}");
+            }
+        }
+        // The merchant never received more than the charges made before the cancel.
+        let sub = s.client().get_subscription(&sub_id);
+        assert_eq!(sub.status, SubStatus::Cancelled);
+        assert_eq!(
+            s.token_client().balance(&s.merchant),
+            AMOUNT * (1 + i128::from(sub.charges))
+        );
+    }
+}
+
+#[test]
+fn invariant_only_subscriber_or_merchant_can_cancel() {
+    let s = Setup::new();
+    let sub_id = subscribed(&s, AMOUNT * 5);
+    for _ in 0..20 {
+        let stranger = Address::generate(&s.env);
+        assert_eq!(
+            s.client().try_cancel(&stranger, &sub_id),
+            Err(Ok(Error::NotAuthorized))
+        );
+        assert_eq!(
+            s.client().get_subscription(&sub_id).status,
+            SubStatus::Active
+        );
+    }
+    // The other plan's merchant is a stranger here too.
+    let other_merchant = Address::generate(&s.env);
+    s.client()
+        .create_plan(&other_merchant, &s.token, &AMOUNT, &PERIOD);
+    assert_eq!(
+        s.client().try_cancel(&other_merchant, &sub_id),
+        Err(Ok(Error::NotAuthorized))
+    );
+    s.client().cancel(&s.merchant, &sub_id);
+    assert_eq!(
+        s.client().get_subscription(&sub_id).status,
+        SubStatus::Cancelled
+    );
+}
+
+#[test]
+fn invariant_ids_are_never_reused() {
+    let s = Setup::new();
+    s.env.mock_all_auths();
+    s.fund(&s.subscriber, AMOUNT * 50);
+    let mut plan_ids = std::vec::Vec::new();
+    let mut sub_ids = std::vec::Vec::new();
+    for i in 0..10u64 {
+        let plan_id = s
+            .client()
+            .create_plan(&s.merchant, &s.token, &AMOUNT, &PERIOD);
+        plan_ids.push(plan_id);
+        let sub_id = s.client().subscribe(&s.subscriber, &plan_id);
+        sub_ids.push(sub_id);
+        // Deactivating and cancelling must not free an id for reuse.
+        if i % 2 == 0 {
+            s.client().deactivate_plan(&plan_id);
+            s.client().cancel(&s.subscriber, &sub_id);
+        }
+    }
+    let expected: std::vec::Vec<u64> = (1..=10).collect();
+    assert_eq!(plan_ids, expected);
+    assert_eq!(sub_ids, expected);
+    assert_eq!(s.client().plan_count(), 10);
+    assert_eq!(s.client().sub_count(), 10);
+}
+
+#[test]
+fn invariant_failed_calls_change_no_state() {
+    let s = Setup::new();
+    let sub_id = subscribed(&s, 0); // no allowance, so charges fail
+    let plan_before = s.client().get_plan(&1);
+    let sub_before = s.client().get_subscription(&sub_id);
+    for i in 1..=10u64 {
+        set_time(&s, START_TS + i * PERIOD);
+        assert!(s.client().try_charge(&sub_id).is_err());
+        assert_eq!(s.client().get_subscription(&sub_id), sub_before);
+        assert_eq!(s.client().get_plan(&1), plan_before);
+        assert_eq!(s.token_client().balance(&s.merchant), AMOUNT);
+    }
+}
