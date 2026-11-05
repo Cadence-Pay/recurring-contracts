@@ -87,7 +87,8 @@ impl RecurringContract {
     ///
     /// The first period is paid with a direct `transfer` from the subscriber to the merchant, so
     /// no allowance is needed for it. The next charge is due one period from now. If the token
-    /// transfer fails (for example the balance is too low) the whole call reverts.
+    /// transfer fails (for example the balance is too low) the call returns `PaymentFailed` and
+    /// the whole call reverts.
     ///
     /// Fails with `PlanNotFound` or `PlanInactive` if the plan cannot take subscriptions.
     pub fn subscribe(env: Env, subscriber: Address, plan_id: u64) -> Result<u64, Error> {
@@ -115,7 +116,14 @@ impl RecurringContract {
 
         // WAVE-ISSUE(contracts-2): trial periods plug in here. The MVP always charges the first
         // period at subscribe.
-        TokenClient::new(&env, &plan.token).transfer(&subscriber, &plan.merchant, &plan.amount);
+        match TokenClient::new(&env, &plan.token).try_transfer(
+            &subscriber,
+            &plan.merchant,
+            &plan.amount,
+        ) {
+            Ok(Ok(())) => {}
+            _ => return Err(Error::PaymentFailed),
+        }
 
         Subscribed {
             sub_id,
@@ -138,8 +146,8 @@ impl RecurringContract {
     /// The next due time follows decision D2 (no back-billing): `next_charge_ts + period_secs`,
     /// or `now + period_secs` if that is not in the future. At most one charge happens per call.
     ///
-    /// If the token call fails (no allowance, expired allowance, low balance) the whole call
-    /// reverts and nothing changes.
+    /// If the token call fails (no allowance, expired allowance, low balance) the call returns
+    /// `PaymentFailed`, the whole call reverts and nothing changes.
     pub fn charge(env: Env, sub_id: u64) -> Result<(), Error> {
         let mut sub = storage::get_sub(&env, sub_id)?;
         if sub.status != SubStatus::Active {
@@ -166,12 +174,15 @@ impl RecurringContract {
 
         // WAVE-ISSUE(contracts-1): a failed-charge grace period plugs in here. In the MVP a
         // failing transfer_from reverts the whole call and no failure is recorded on-chain.
-        TokenClient::new(&env, &plan.token).transfer_from(
+        match TokenClient::new(&env, &plan.token).try_transfer_from(
             &env.current_contract_address(),
             &sub.subscriber,
             &plan.merchant,
             &plan.amount,
-        );
+        ) {
+            Ok(Ok(())) => {}
+            _ => return Err(Error::PaymentFailed),
+        }
 
         Charged {
             sub_id,

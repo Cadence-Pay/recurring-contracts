@@ -22,4 +22,8 @@ pub enum Error {
     NotAuthorized = 8,
     /// An arithmetic operation overflowed.
     Overflow = 9,
+    /// The token transfer failed: balance too low, allowance too low or expired, or the token
+    /// refused. Without this, the token's own error code would pass through and could be read as
+    /// one of the codes above (for example the token's code 9 looks like `Overflow`).
+    PaymentFailed = 10,
 }

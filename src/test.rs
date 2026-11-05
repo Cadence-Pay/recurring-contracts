@@ -314,7 +314,7 @@ fn subscribe_with_insufficient_balance_reverts_everything() {
     let plan_id = s.new_plan();
     s.fund(&s.subscriber, AMOUNT - 1);
     let r = s.client().try_subscribe(&s.subscriber, &plan_id);
-    assert!(r.is_err());
+    assert_eq!(r, Err(Ok(Error::PaymentFailed)));
     // The failed call left no subscription behind.
     assert_eq!(s.client().sub_count(), 0);
     assert_eq!(s.token_client().balance(&s.merchant), 0);
@@ -455,7 +455,10 @@ fn charge_with_too_little_allowance_reverts_and_changes_nothing() {
     let sub_id = subscribed(&s, AMOUNT - 1);
     set_time(&s, START_TS + PERIOD);
     let before = s.client().get_subscription(&sub_id);
-    assert!(s.client().try_charge(&sub_id).is_err());
+    assert_eq!(
+        s.client().try_charge(&sub_id),
+        Err(Ok(Error::PaymentFailed))
+    );
     assert_eq!(s.client().get_subscription(&sub_id), before);
     assert_eq!(s.token_client().balance(&s.merchant), AMOUNT);
     assert_eq!(s.token_client().balance(&s.subscriber), AMOUNT * 9);
@@ -472,7 +475,10 @@ fn charge_with_no_allowance_reverts() {
     let s = Setup::new();
     let sub_id = subscribed(&s, 0);
     set_time(&s, START_TS + PERIOD);
-    assert!(s.client().try_charge(&sub_id).is_err());
+    assert_eq!(
+        s.client().try_charge(&sub_id),
+        Err(Ok(Error::PaymentFailed))
+    );
     assert_eq!(s.client().get_subscription(&sub_id).charges, 0);
 }
 
@@ -487,7 +493,10 @@ fn charge_with_expired_allowance_reverts() {
         .set_sequence_number(s.env.ledger().sequence() + 10_001);
     // The token itself now treats the allowance as zero.
     assert_eq!(s.token_client().allowance(&s.subscriber, &s.contract), 0);
-    assert!(s.client().try_charge(&sub_id).is_err());
+    assert_eq!(
+        s.client().try_charge(&sub_id),
+        Err(Ok(Error::PaymentFailed))
+    );
     assert_eq!(s.client().get_subscription(&sub_id).charges, 0);
     assert_eq!(s.token_client().balance(&s.merchant), AMOUNT);
     // A fresh allowance fixes it, so expiry was the cause.
@@ -507,7 +516,10 @@ fn charge_with_low_balance_reverts() {
     s.token_client()
         .transfer(&s.subscriber, &elsewhere, &(AMOUNT * 9));
     set_time(&s, START_TS + PERIOD);
-    assert!(s.client().try_charge(&sub_id).is_err());
+    assert_eq!(
+        s.client().try_charge(&sub_id),
+        Err(Ok(Error::PaymentFailed))
+    );
     assert_eq!(s.client().get_subscription(&sub_id).charges, 0);
     // Top the balance up and the same charge works, so the balance was the cause.
     s.fund(&s.subscriber, AMOUNT);
