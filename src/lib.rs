@@ -3,7 +3,7 @@
 //! A merchant creates a plan. A subscriber pays the first period at `subscribe` and approves a
 //! token allowance. Anyone may then call `charge` once per period. This is not payment streaming.
 //!
-//! Task 1.2: plan functions are implemented. `subscribe`, `charge` and `cancel` are still stubs.
+//! Task 1.3: plan functions and `subscribe` are implemented. `charge` and `cancel` are still stubs.
 #![no_std]
 
 mod error;
@@ -12,13 +12,13 @@ mod storage;
 mod types;
 
 pub use error::Error;
-pub use events::{PlanCreated, PlanDeactivated};
+pub use events::{PlanCreated, PlanDeactivated, Subscribed};
 pub use types::{
     DataKey, Plan, SubStatus, Subscription, LEDGERS_PER_DAY, MAX_PERIOD_SECS, MIN_PERIOD_SECS,
     TTL_EXTEND_TO, TTL_THRESHOLD,
 };
 
-use soroban_sdk::{contract, contractimpl, Address, Env};
+use soroban_sdk::{contract, contractimpl, token::TokenClient, Address, Env};
 
 #[contract]
 pub struct RecurringContract;
@@ -84,8 +84,48 @@ impl RecurringContract {
 
     /// Subscribe and pay the first period now. Requires the subscriber's authorization.
     /// Returns the new subscription id.
-    pub fn subscribe(_env: Env, _subscriber: Address, _plan_id: u64) -> Result<u64, Error> {
-        Err(Error::PlanNotFound)
+    ///
+    /// The first period is paid with a direct `transfer` from the subscriber to the merchant, so
+    /// no allowance is needed for it. The next charge is due one period from now. If the token
+    /// transfer fails (for example the balance is too low) the whole call reverts.
+    ///
+    /// Fails with `PlanNotFound` or `PlanInactive` if the plan cannot take subscriptions.
+    pub fn subscribe(env: Env, subscriber: Address, plan_id: u64) -> Result<u64, Error> {
+        subscriber.require_auth();
+        let plan = storage::get_plan(&env, plan_id)?;
+        if !plan.active {
+            return Err(Error::PlanInactive);
+        }
+        let next_charge_ts = env
+            .ledger()
+            .timestamp()
+            .checked_add(plan.period_secs)
+            .ok_or(Error::Overflow)?;
+
+        let sub_id = storage::next_id(&env, &DataKey::SubCount)?;
+        let sub = Subscription {
+            plan_id,
+            subscriber: subscriber.clone(),
+            next_charge_ts,
+            status: SubStatus::Active,
+            charges: 0,
+        };
+        storage::set_sub(&env, sub_id, &sub);
+        storage::bump_plan(&env, plan_id);
+
+        // WAVE-ISSUE(contracts-2): trial periods plug in here. The MVP always charges the first
+        // period at subscribe.
+        TokenClient::new(&env, &plan.token).transfer(&subscriber, &plan.merchant, &plan.amount);
+
+        Subscribed {
+            sub_id,
+            plan_id,
+            subscriber,
+            amount: plan.amount,
+            next_charge_ts,
+        }
+        .publish(&env);
+        Ok(sub_id)
     }
 
     /// Charge one period. Permissionless: any account may call it once the subscription is due.
@@ -104,8 +144,8 @@ impl RecurringContract {
     }
 
     /// Read a subscription.
-    pub fn get_subscription(_env: Env, _sub_id: u64) -> Result<Subscription, Error> {
-        Err(Error::SubNotFound)
+    pub fn get_subscription(env: Env, sub_id: u64) -> Result<Subscription, Error> {
+        storage::get_sub(&env, sub_id)
     }
 
     /// Number of plans created so far. Ids run from 1 to this value.
@@ -114,8 +154,8 @@ impl RecurringContract {
     }
 
     /// Number of subscriptions created so far. Ids run from 1 to this value.
-    pub fn sub_count(_env: Env) -> u64 {
-        0
+    pub fn sub_count(env: Env) -> u64 {
+        storage::count(&env, &DataKey::SubCount)
     }
 }
 

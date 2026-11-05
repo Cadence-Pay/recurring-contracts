@@ -1,7 +1,7 @@
 //! Storage helpers. Every persistent write extends the entry's TTL.
 // WAVE-ISSUE(contracts-5): a storage and TTL cost report would measure the entries written here.
 
-use crate::types::{DataKey, Plan, TTL_EXTEND_TO, TTL_THRESHOLD};
+use crate::types::{DataKey, Plan, Subscription, TTL_EXTEND_TO, TTL_THRESHOLD};
 use crate::Error;
 use soroban_sdk::Env;
 
@@ -35,5 +35,23 @@ pub fn get_plan(env: &Env, plan_id: u64) -> Result<Plan, Error> {
 pub fn set_plan(env: &Env, plan_id: u64, plan: &Plan) {
     let key = DataKey::Plan(plan_id);
     env.storage().persistent().set(&key, plan);
+    extend(env, &key);
+}
+
+/// Extend a plan's TTL without changing it. Used when something depends on the plan staying alive.
+pub fn bump_plan(env: &Env, plan_id: u64) {
+    extend(env, &DataKey::Plan(plan_id));
+}
+
+pub fn get_sub(env: &Env, sub_id: u64) -> Result<Subscription, Error> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::Sub(sub_id))
+        .ok_or(Error::SubNotFound)
+}
+
+pub fn set_sub(env: &Env, sub_id: u64, sub: &Subscription) {
+    let key = DataKey::Sub(sub_id);
+    env.storage().persistent().set(&key, sub);
     extend(env, &key);
 }

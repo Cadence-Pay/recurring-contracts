@@ -23,3 +23,17 @@ pub struct PlanDeactivated {
     #[topic]
     pub merchant: Address,
 }
+
+#[contractevent]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Subscribed {
+    #[topic]
+    pub sub_id: u64,
+    #[topic]
+    pub plan_id: u64,
+    #[topic]
+    pub subscriber: Address,
+    /// Amount paid now for the first period.
+    pub amount: i128,
+    pub next_charge_ts: u64,
+}
