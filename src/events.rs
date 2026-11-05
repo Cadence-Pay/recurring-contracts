@@ -52,3 +52,16 @@ pub struct Charged {
     pub charges: u32,
     pub next_charge_ts: u64,
 }
+
+#[contractevent]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Cancelled {
+    #[topic]
+    pub sub_id: u64,
+    #[topic]
+    pub plan_id: u64,
+    #[topic]
+    pub subscriber: Address,
+    /// The subscriber or the plan merchant.
+    pub cancelled_by: Address,
+}

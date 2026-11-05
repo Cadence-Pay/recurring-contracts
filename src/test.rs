@@ -583,3 +583,133 @@ fn charge_still_works_after_plan_is_deactivated() {
     s.client().charge(&sub_id);
     assert_eq!(s.client().get_subscription(&sub_id).charges, 1);
 }
+
+// ---- cancel ----
+
+#[test]
+fn subscriber_can_cancel() {
+    let s = Setup::new();
+    let sub_id = subscribed(&s, AMOUNT * 5);
+    s.client().cancel(&s.subscriber, &sub_id);
+    let expected = Cancelled {
+        sub_id,
+        plan_id: 1,
+        subscriber: s.subscriber.clone(),
+        cancelled_by: s.subscriber.clone(),
+    }
+    .to_xdr(&s.env, &s.contract);
+    assert_eq!(s.events().events(), std::slice::from_ref(&expected));
+    assert_eq!(
+        s.client().get_subscription(&sub_id).status,
+        SubStatus::Cancelled
+    );
+}
+
+#[test]
+fn merchant_can_cancel() {
+    let s = Setup::new();
+    let sub_id = subscribed(&s, AMOUNT * 5);
+    s.client().cancel(&s.merchant, &sub_id);
+    let expected = Cancelled {
+        sub_id,
+        plan_id: 1,
+        subscriber: s.subscriber.clone(),
+        cancelled_by: s.merchant.clone(),
+    }
+    .to_xdr(&s.env, &s.contract);
+    assert_eq!(s.events().events(), std::slice::from_ref(&expected));
+    assert_eq!(
+        s.client().get_subscription(&sub_id).status,
+        SubStatus::Cancelled
+    );
+}
+
+#[test]
+fn stranger_cannot_cancel() {
+    let s = Setup::new();
+    let sub_id = subscribed(&s, AMOUNT * 5);
+    let stranger = Address::generate(&s.env);
+    // The stranger authorizes their own call, but they are neither party.
+    assert_eq!(
+        s.client().try_cancel(&stranger, &sub_id),
+        Err(Ok(Error::NotAuthorized))
+    );
+    assert_eq!(
+        s.client().get_subscription(&sub_id).status,
+        SubStatus::Active
+    );
+}
+
+#[test]
+fn cancel_without_the_callers_authorization_fails() {
+    let s = Setup::new();
+    let sub_id = subscribed(&s, AMOUNT * 5);
+    // The stranger signs, but names the subscriber as the caller.
+    let stranger = Address::generate(&s.env);
+    s.env.mock_auths(&[MockAuth {
+        address: &stranger,
+        invoke: &MockAuthInvoke {
+            contract: &s.contract,
+            fn_name: "cancel",
+            args: (s.subscriber.clone(), sub_id).into_val(&s.env),
+            sub_invokes: &[],
+        },
+    }]);
+    assert!(s.client().try_cancel(&s.subscriber, &sub_id).is_err());
+    assert_eq!(
+        s.client().get_subscription(&sub_id).status,
+        SubStatus::Active
+    );
+}
+
+#[test]
+fn cancelling_twice_returns_not_active() {
+    let s = Setup::new();
+    let sub_id = subscribed(&s, AMOUNT * 5);
+    s.client().cancel(&s.subscriber, &sub_id);
+    assert_eq!(
+        s.client().try_cancel(&s.subscriber, &sub_id),
+        Err(Ok(Error::NotActive))
+    );
+    assert_eq!(
+        s.client().try_cancel(&s.merchant, &sub_id),
+        Err(Ok(Error::NotActive))
+    );
+}
+
+#[test]
+fn cancel_unknown_subscription_fails() {
+    let s = Setup::new();
+    s.env.mock_all_auths();
+    assert_eq!(
+        s.client().try_cancel(&s.subscriber, &9),
+        Err(Ok(Error::SubNotFound))
+    );
+}
+
+#[test]
+fn cancelled_subscription_is_never_charged() {
+    let s = Setup::new();
+    let sub_id = subscribed(&s, AMOUNT * 5);
+    s.client().cancel(&s.subscriber, &sub_id);
+    set_time(&s, START_TS + 5 * PERIOD);
+    assert_eq!(s.client().try_charge(&sub_id), Err(Ok(Error::NotActive)));
+    assert_eq!(s.client().get_subscription(&sub_id).charges, 0);
+    assert_eq!(s.token_client().balance(&s.merchant), AMOUNT);
+    assert_eq!(
+        s.token_client().allowance(&s.subscriber, &s.contract),
+        AMOUNT * 5
+    );
+}
+
+#[test]
+fn cancel_works_after_the_plan_is_deactivated() {
+    let s = Setup::new();
+    let sub_id = subscribed(&s, AMOUNT * 5);
+    s.client().deactivate_plan(&1);
+    s.client().cancel(&s.subscriber, &sub_id);
+    assert_eq!(
+        s.client().get_subscription(&sub_id).status,
+        SubStatus::Cancelled
+    );
+}

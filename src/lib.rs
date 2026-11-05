@@ -3,7 +3,7 @@
 //! A merchant creates a plan. A subscriber pays the first period at `subscribe` and approves a
 //! token allowance. Anyone may then call `charge` once per period. This is not payment streaming.
 //!
-//! Task 1.4: plan functions, `subscribe` and `charge` are implemented. `cancel` is still a stub.
+//! All public functions from the design are implemented. See docs/CONTRACT.md.
 #![no_std]
 
 mod error;
@@ -12,7 +12,7 @@ mod storage;
 mod types;
 
 pub use error::Error;
-pub use events::{Charged, PlanCreated, PlanDeactivated, Subscribed};
+pub use events::{Cancelled, Charged, PlanCreated, PlanDeactivated, Subscribed};
 pub use types::{
     DataKey, Plan, SubStatus, Subscription, LEDGERS_PER_DAY, MAX_PERIOD_SECS, MIN_PERIOD_SECS,
     TTL_EXTEND_TO, TTL_THRESHOLD,
@@ -186,8 +186,30 @@ impl RecurringContract {
     }
 
     /// Cancel a subscription. Only the subscriber or the plan's merchant may do so.
-    pub fn cancel(_env: Env, _caller: Address, _sub_id: u64) -> Result<(), Error> {
-        Err(Error::SubNotFound)
+    ///
+    /// `caller` must authorize the call and must be one of the two parties (`NotAuthorized`
+    /// otherwise). A cancelled subscription is never charged again (`NotActive`). Cancelling does
+    /// not touch the token allowance. The subscriber can revoke it at the token.
+    pub fn cancel(env: Env, caller: Address, sub_id: u64) -> Result<(), Error> {
+        caller.require_auth();
+        let mut sub = storage::get_sub(&env, sub_id)?;
+        let plan = storage::get_plan(&env, sub.plan_id)?;
+        if caller != sub.subscriber && caller != plan.merchant {
+            return Err(Error::NotAuthorized);
+        }
+        if sub.status != SubStatus::Active {
+            return Err(Error::NotActive);
+        }
+        sub.status = SubStatus::Cancelled;
+        storage::set_sub(&env, sub_id, &sub);
+        Cancelled {
+            sub_id,
+            plan_id: sub.plan_id,
+            subscriber: sub.subscriber,
+            cancelled_by: caller,
+        }
+        .publish(&env);
+        Ok(())
     }
 
     /// Read a plan.
