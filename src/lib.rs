@@ -3,7 +3,7 @@
 //! A merchant creates a plan. A subscriber pays the first period at `subscribe` and approves a
 //! token allowance. Anyone may then call `charge` once per period. This is not payment streaming.
 //!
-//! Task 1.3: plan functions and `subscribe` are implemented. `charge` and `cancel` are still stubs.
+//! Task 1.4: plan functions, `subscribe` and `charge` are implemented. `cancel` is still a stub.
 #![no_std]
 
 mod error;
@@ -12,7 +12,7 @@ mod storage;
 mod types;
 
 pub use error::Error;
-pub use events::{PlanCreated, PlanDeactivated, Subscribed};
+pub use events::{Charged, PlanCreated, PlanDeactivated, Subscribed};
 pub use types::{
     DataKey, Plan, SubStatus, Subscription, LEDGERS_PER_DAY, MAX_PERIOD_SECS, MIN_PERIOD_SECS,
     TTL_EXTEND_TO, TTL_THRESHOLD,
@@ -129,8 +129,60 @@ impl RecurringContract {
     }
 
     /// Charge one period. Permissionless: any account may call it once the subscription is due.
-    pub fn charge(_env: Env, _sub_id: u64) -> Result<(), Error> {
-        Err(Error::SubNotFound)
+    ///
+    /// Requires an `Active` subscription (`NotActive` otherwise) and `now >= next_charge_ts`
+    /// (`NotDue` otherwise). Moves the plan amount from the subscriber to the merchant with
+    /// `transfer_from`, spending the allowance the subscriber gave this contract. The contract is
+    /// the spender and the invoker, so the caller does not need to authorize anything.
+    ///
+    /// The next due time follows decision D2 (no back-billing): `next_charge_ts + period_secs`,
+    /// or `now + period_secs` if that is not in the future. At most one charge happens per call.
+    ///
+    /// If the token call fails (no allowance, expired allowance, low balance) the whole call
+    /// reverts and nothing changes.
+    pub fn charge(env: Env, sub_id: u64) -> Result<(), Error> {
+        let mut sub = storage::get_sub(&env, sub_id)?;
+        if sub.status != SubStatus::Active {
+            return Err(Error::NotActive);
+        }
+        let now = env.ledger().timestamp();
+        if now < sub.next_charge_ts {
+            return Err(Error::NotDue);
+        }
+        let plan = storage::get_plan(&env, sub.plan_id)?;
+
+        let scheduled = sub
+            .next_charge_ts
+            .checked_add(plan.period_secs)
+            .ok_or(Error::Overflow)?;
+        sub.next_charge_ts = if scheduled <= now {
+            now.checked_add(plan.period_secs).ok_or(Error::Overflow)?
+        } else {
+            scheduled
+        };
+        sub.charges = sub.charges.checked_add(1).ok_or(Error::Overflow)?;
+        storage::set_sub(&env, sub_id, &sub);
+        storage::bump_plan(&env, sub.plan_id);
+
+        // WAVE-ISSUE(contracts-1): a failed-charge grace period plugs in here. In the MVP a
+        // failing transfer_from reverts the whole call and no failure is recorded on-chain.
+        TokenClient::new(&env, &plan.token).transfer_from(
+            &env.current_contract_address(),
+            &sub.subscriber,
+            &plan.merchant,
+            &plan.amount,
+        );
+
+        Charged {
+            sub_id,
+            plan_id: sub.plan_id,
+            subscriber: sub.subscriber,
+            amount: plan.amount,
+            charges: sub.charges,
+            next_charge_ts: sub.next_charge_ts,
+        }
+        .publish(&env);
+        Ok(())
     }
 
     /// Cancel a subscription. Only the subscriber or the plan's merchant may do so.

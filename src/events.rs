@@ -37,3 +37,18 @@ pub struct Subscribed {
     pub amount: i128,
     pub next_charge_ts: u64,
 }
+
+#[contractevent]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Charged {
+    #[topic]
+    pub sub_id: u64,
+    #[topic]
+    pub plan_id: u64,
+    #[topic]
+    pub subscriber: Address,
+    pub amount: i128,
+    /// Total successful charges after the first payment, including this one.
+    pub charges: u32,
+    pub next_charge_ts: u64,
+}

@@ -373,3 +373,213 @@ fn subscribe_needs_only_subscribe_and_nested_transfer_authorization() {
     assert_eq!(s.client().subscribe(&s.subscriber, &plan_id), 1);
     assert_eq!(s.token_client().balance(&s.merchant), AMOUNT);
 }
+
+// ---- charge ----
+
+/// A plan, a funded subscriber with an allowance, and one subscription made at START_TS.
+fn subscribed(s: &Setup, allowance: i128) -> u64 {
+    let plan_id = s.new_plan();
+    s.fund(&s.subscriber, AMOUNT * 10);
+    let sub_id = s.client().subscribe(&s.subscriber, &plan_id);
+    let live_until = s.env.ledger().sequence() + 10_000;
+    s.token_client()
+        .approve(&s.subscriber, &s.contract, &allowance, &live_until);
+    sub_id
+}
+
+fn set_time(s: &Setup, ts: u64) {
+    s.env.ledger().set_timestamp(ts);
+}
+
+#[test]
+fn charge_on_time_moves_funds_and_updates_subscription() {
+    let s = Setup::new();
+    let sub_id = subscribed(&s, AMOUNT * 5);
+    set_time(&s, START_TS + PERIOD);
+    s.client().charge(&sub_id);
+    let expected = Charged {
+        sub_id,
+        plan_id: 1,
+        subscriber: s.subscriber.clone(),
+        amount: AMOUNT,
+        charges: 1,
+        next_charge_ts: START_TS + 2 * PERIOD,
+    }
+    .to_xdr(&s.env, &s.contract);
+    assert_eq!(s.events().events(), std::slice::from_ref(&expected));
+
+    let sub = s.client().get_subscription(&sub_id);
+    assert_eq!(sub.charges, 1);
+    assert_eq!(sub.next_charge_ts, START_TS + 2 * PERIOD);
+    assert_eq!(sub.status, SubStatus::Active);
+    // First period at subscribe plus this charge.
+    assert_eq!(s.token_client().balance(&s.merchant), AMOUNT * 2);
+    assert_eq!(s.token_client().balance(&s.subscriber), AMOUNT * 8);
+    // The allowance was spent.
+    assert_eq!(
+        s.token_client().allowance(&s.subscriber, &s.contract),
+        AMOUNT * 4
+    );
+}
+
+#[test]
+fn charge_before_due_fails_with_not_due() {
+    let s = Setup::new();
+    let sub_id = subscribed(&s, AMOUNT * 5);
+    set_time(&s, START_TS + PERIOD - 1);
+    assert_eq!(s.client().try_charge(&sub_id), Err(Ok(Error::NotDue)));
+    assert_eq!(s.client().get_subscription(&sub_id).charges, 0);
+    assert_eq!(s.token_client().balance(&s.merchant), AMOUNT);
+}
+
+#[test]
+fn second_charge_in_the_same_period_fails() {
+    let s = Setup::new();
+    let sub_id = subscribed(&s, AMOUNT * 5);
+    set_time(&s, START_TS + PERIOD);
+    s.client().charge(&sub_id);
+    assert_eq!(s.client().try_charge(&sub_id), Err(Ok(Error::NotDue)));
+    // Still not due one second before the next period starts.
+    set_time(&s, START_TS + 2 * PERIOD - 1);
+    assert_eq!(s.client().try_charge(&sub_id), Err(Ok(Error::NotDue)));
+    assert_eq!(s.client().get_subscription(&sub_id).charges, 1);
+    // Due again exactly when the next period starts.
+    set_time(&s, START_TS + 2 * PERIOD);
+    s.client().charge(&sub_id);
+    assert_eq!(s.client().get_subscription(&sub_id).charges, 2);
+}
+
+#[test]
+fn charge_with_too_little_allowance_reverts_and_changes_nothing() {
+    let s = Setup::new();
+    let sub_id = subscribed(&s, AMOUNT - 1);
+    set_time(&s, START_TS + PERIOD);
+    let before = s.client().get_subscription(&sub_id);
+    assert!(s.client().try_charge(&sub_id).is_err());
+    assert_eq!(s.client().get_subscription(&sub_id), before);
+    assert_eq!(s.token_client().balance(&s.merchant), AMOUNT);
+    assert_eq!(s.token_client().balance(&s.subscriber), AMOUNT * 9);
+    // The allowance was the only problem: the same charge works once it is large enough.
+    let live_until = s.env.ledger().sequence() + 10_000;
+    s.token_client()
+        .approve(&s.subscriber, &s.contract, &AMOUNT, &live_until);
+    s.client().charge(&sub_id);
+    assert_eq!(s.client().get_subscription(&sub_id).charges, 1);
+}
+
+#[test]
+fn charge_with_no_allowance_reverts() {
+    let s = Setup::new();
+    let sub_id = subscribed(&s, 0);
+    set_time(&s, START_TS + PERIOD);
+    assert!(s.client().try_charge(&sub_id).is_err());
+    assert_eq!(s.client().get_subscription(&sub_id).charges, 0);
+}
+
+#[test]
+fn charge_with_expired_allowance_reverts() {
+    let s = Setup::new();
+    let sub_id = subscribed(&s, AMOUNT * 5);
+    set_time(&s, START_TS + PERIOD);
+    // Move past the ledger the allowance was valid until.
+    s.env
+        .ledger()
+        .set_sequence_number(s.env.ledger().sequence() + 10_001);
+    // The token itself now treats the allowance as zero.
+    assert_eq!(s.token_client().allowance(&s.subscriber, &s.contract), 0);
+    assert!(s.client().try_charge(&sub_id).is_err());
+    assert_eq!(s.client().get_subscription(&sub_id).charges, 0);
+    assert_eq!(s.token_client().balance(&s.merchant), AMOUNT);
+    // A fresh allowance fixes it, so expiry was the cause.
+    let live_until = s.env.ledger().sequence() + 10_000;
+    s.token_client()
+        .approve(&s.subscriber, &s.contract, &AMOUNT, &live_until);
+    s.client().charge(&sub_id);
+    assert_eq!(s.client().get_subscription(&sub_id).charges, 1);
+}
+
+#[test]
+fn charge_with_low_balance_reverts() {
+    let s = Setup::new();
+    let sub_id = subscribed(&s, AMOUNT * 5);
+    // Spend the subscriber's balance elsewhere.
+    let elsewhere = Address::generate(&s.env);
+    s.token_client()
+        .transfer(&s.subscriber, &elsewhere, &(AMOUNT * 9));
+    set_time(&s, START_TS + PERIOD);
+    assert!(s.client().try_charge(&sub_id).is_err());
+    assert_eq!(s.client().get_subscription(&sub_id).charges, 0);
+    // Top the balance up and the same charge works, so the balance was the cause.
+    s.fund(&s.subscriber, AMOUNT);
+    s.client().charge(&sub_id);
+    assert_eq!(s.client().get_subscription(&sub_id).charges, 1);
+}
+
+#[test]
+fn missed_periods_are_skipped_not_billed_in_a_burst() {
+    // Decision D2: after a late charge the schedule restarts from now.
+    let s = Setup::new();
+    let sub_id = subscribed(&s, AMOUNT * 5);
+    let late = START_TS + 10 * PERIOD + 7;
+    set_time(&s, late);
+    s.client().charge(&sub_id);
+    let sub = s.client().get_subscription(&sub_id);
+    assert_eq!(sub.charges, 1);
+    assert_eq!(sub.next_charge_ts, late + PERIOD);
+    // Only one period was collected, and a second charge now is refused.
+    assert_eq!(s.token_client().balance(&s.merchant), AMOUNT * 2);
+    assert_eq!(s.client().try_charge(&sub_id), Err(Ok(Error::NotDue)));
+}
+
+#[test]
+fn slightly_late_charge_keeps_the_original_rhythm() {
+    // Decision D2: if the scheduled next time is still in the future, keep it.
+    let s = Setup::new();
+    let sub_id = subscribed(&s, AMOUNT * 5);
+    set_time(&s, START_TS + PERIOD + 10);
+    s.client().charge(&sub_id);
+    assert_eq!(
+        s.client().get_subscription(&sub_id).next_charge_ts,
+        START_TS + 2 * PERIOD
+    );
+}
+
+#[test]
+fn charge_when_next_time_equals_now_moves_to_now_plus_period() {
+    // Boundary of D2: scheduled == now counts as "not in the future".
+    let s = Setup::new();
+    let sub_id = subscribed(&s, AMOUNT * 5);
+    set_time(&s, START_TS + 2 * PERIOD);
+    s.client().charge(&sub_id);
+    assert_eq!(
+        s.client().get_subscription(&sub_id).next_charge_ts,
+        START_TS + 3 * PERIOD
+    );
+}
+
+#[test]
+fn anyone_can_charge_without_authorizing_anything() {
+    let s = Setup::new();
+    let sub_id = subscribed(&s, AMOUNT * 5);
+    set_time(&s, START_TS + PERIOD);
+    // Replace the blanket mock with no authorization at all.
+    s.env.mock_auths(&[]);
+    s.client().charge(&sub_id);
+    assert_eq!(s.client().get_subscription(&sub_id).charges, 1);
+}
+
+#[test]
+fn charge_unknown_subscription_fails() {
+    let s = Setup::new();
+    assert_eq!(s.client().try_charge(&42), Err(Ok(Error::SubNotFound)));
+}
+
+#[test]
+fn charge_still_works_after_plan_is_deactivated() {
+    let s = Setup::new();
+    let sub_id = subscribed(&s, AMOUNT * 5);
+    s.client().deactivate_plan(&1);
+    set_time(&s, START_TS + PERIOD);
+    s.client().charge(&sub_id);
+    assert_eq!(s.client().get_subscription(&sub_id).charges, 1);
+}
