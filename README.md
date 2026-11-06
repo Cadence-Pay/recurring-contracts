@@ -6,9 +6,9 @@ This is **not** payment streaming. It is one discrete charge per period.
 
 ## Status
 
-Implemented and covered by 48 unit tests: `create_plan`, `deactivate_plan`, `subscribe`, `charge`, `cancel` and the read functions. See [docs/CONTRACT.md](docs/CONTRACT.md) for functions, errors, events, storage, TTL policy, limits and what is not guaranteed.
+Implemented, tested and deployed to **testnet** (not mainnet): `create_plan`, `deactivate_plan`, `subscribe`, `charge`, `cancel` and the read functions. 48 unit tests cover each function's success and failure paths and the invariants (at most one charge per period, charges never decrease, a cancelled subscription is never charged, only the two parties can cancel, ids are never reused). A full lifecycle (plan, approve, subscribe, charge by a third party, cancel) was run on the live testnet, twice, and behaved as the tests predict. See [docs/CONTRACT.md](docs/CONTRACT.md) for functions, errors, events, storage, TTL policy, measured fees, limits and what is not guaranteed.
 
-Not done yet: testnet deployment, fee and rent measurements, and any test against a live network or a real wallet.
+Not done: a mainnet deployment, tests with tokens other than the Stellar Asset Contract, and an independent audit.
 
 **Audit status: this contract has not been audited.**
 
