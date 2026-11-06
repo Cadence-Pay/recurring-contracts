@@ -9,6 +9,7 @@ import {
   parseFeeCharged,
   parseTxHash,
   readNetwork,
+  withNetworkFlags,
 } from './release.mjs';
 
 const TESTNET = {
@@ -104,6 +105,14 @@ test('parseTxHash and parseFeeCharged read the CLI output', () => {
   assert.equal(parseTxHash(`link https://stellar.expert/explorer/testnet/tx/${hash} ok`), hash);
   assert.equal(parseTxHash('nothing'), undefined);
   assert.equal(parseFeeCharged('| Fee Charged: 14858 | Refunded: 6561 |'), 14858);
+  // The real table, as printed by the CLI: the total is the row that is exactly "Fee Charged".
+  const table = [
+    '| Inclusion Fee Charged: 100 | Non-Refundable Charged: 3277 | Refundable Charged: 11481 | Refunded: 6561 |',
+    '| Inclusion Fee Charged: 100 | Resource Fee Charged: 14758 | Refunded: 6561 |',
+    '| Fee Charged: 14858 | Refunded: 6561 |',
+  ].join(String.fromCharCode(10));
+  assert.equal(parseFeeCharged(table), 14858);
+  assert.equal(parseFeeCharged('| Inclusion Fee Charged: 100 |'), undefined);
   assert.equal(parseFeeCharged('nothing'), undefined);
 });
 
@@ -137,4 +146,17 @@ test('create-plan validates its numbers before any network call', () => {
   assert.throws(() => main([...base, '--amount', '0', '--period', '60'], TESTNET), /--amount/);
   assert.throws(() => main([...base, '--amount', '-5', '--period', '60'], TESTNET), /--amount/);
   assert.throws(() => main([...base, '--amount', '5', '--period', 'abc'], TESTNET), /--period/);
+});
+
+test('network flags go before the -- separator, never after it', () => {
+  const net = { rpcUrl: 'https://rpc.example', passphrase: 'P' };
+  const invoke = ['contract', 'invoke', '--id', 'C1', '--', 'create_plan', '--amount', '5'];
+  assert.deepEqual(withNetworkFlags(invoke, net, true), [
+    'contract', 'invoke', '--id', 'C1',
+    '--cost', '--rpc-url', 'https://rpc.example', '--network-passphrase', 'P',
+    '--', 'create_plan', '--amount', '5',
+  ]);
+  assert.deepEqual(withNetworkFlags(['contract', 'fetch', '--id', 'C1'], net), [
+    'contract', 'fetch', '--id', 'C1', '--rpc-url', 'https://rpc.example', '--network-passphrase', 'P',
+  ]);
 });

@@ -84,6 +84,13 @@ export function parseArgs(argv) {
 }
 
 /** Contract id from the CLI's output: the last line that is a contract id. */
+/** Where the network options go in a CLI call: before `--`. Exported so it can be tested. */
+export function withNetworkFlags(args, net, cost = false) {
+  const flags = [...(cost ? ['--cost'] : []), '--rpc-url', net.rpcUrl, '--network-passphrase', net.passphrase];
+  const split = args.indexOf('--');
+  return split === -1 ? [...args, ...flags] : [...args.slice(0, split), ...flags, ...args.slice(split)];
+}
+
 export function parseContractId(stdout) {
   const ids = stdout
     .split(/\r?\n/)
@@ -99,7 +106,9 @@ export function parseTxHash(text) {
 
 /** Fee charged, in stroops, from the CLI's cost table, if there is one. */
 export function parseFeeCharged(text) {
-  const m = /Fee Charged:\s*(\d+)/.exec(text);
+  // The CLI's table has rows "Inclusion Fee Charged", "Resource Fee Charged" and the total
+  // "Fee Charged". Only the row that is exactly "Fee Charged" is the total.
+  const m = /(?:^|\n)[^A-Za-z\n]*Fee Charged:\s*(\d+)/.exec(text);
   return m === null ? undefined : Number(m[1]);
 }
 
@@ -112,11 +121,12 @@ export function sha256File(path) {
  * (to stderr), which is returned so the cost of each step can be reported.
  */
 function stellar(args, net, { cost = false } = {}) {
-  const full = [...args, ...(cost ? ['--cost'] : []), '--rpc-url', net.rpcUrl, '--network-passphrase', net.passphrase];
+  // Network options must come before `--`: after it, the CLI reads everything as arguments of the
+  // contract function being called.
+  const full = withNetworkFlags(args, net, cost);
   const r = spawnSync('stellar', full, { encoding: 'utf8' });
   if (r.error) throw new Error(`Could not run the Stellar CLI: ${r.error.message}`);
-  if (r.status !== 0) throw new Error(`stellar ${args.slice(0, 3).join(' ')} failed:
-${r.stderr ?? ''}`);
+  if (r.status !== 0) throw new Error(`stellar ${args.slice(0, 3).join(' ')} failed:\n${r.stderr ?? ''}`);
   return { stdout: r.stdout ?? '', stderr: r.stderr ?? '' };
 }
 
