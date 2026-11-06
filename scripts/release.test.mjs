@@ -160,3 +160,15 @@ test('network flags go before the -- separator, never after it', () => {
     'contract', 'fetch', '--id', 'C1', '--rpc-url', 'https://rpc.example', '--network-passphrase', 'P',
   ]);
 });
+
+test('revoke-approval validates its inputs and refuses secrets before any network call', () => {
+  const token = `C${'A'.repeat(55)}`;
+  const spender = `C${'B'.repeat(55)}`;
+  assert.throws(() => main(['revoke-approval', '--token', 'GABC', '--spender', spender, '--source', 'alice'], TESTNET), /--token/);
+  assert.throws(() => main(['revoke-approval', '--token', token, '--spender', 'nope', '--source', 'alice'], TESTNET), /--spender/);
+  assert.throws(
+    () => main(['revoke-approval', '--token', token, '--spender', spender, '--source', `S${'D'.repeat(55)}`], TESTNET),
+    /NAME of an identity/,
+  );
+  assert.throws(() => main(['revoke-approval', '--token', token, '--spender', spender, '--source', 'alice'], MAINNET), /RELEASE_ALLOW_MAINNET=yes/);
+});

@@ -242,6 +242,20 @@ function status(net, opts) {
   if (opts.sub) say(`subscription ${opts.sub}: ${view('get_subscription', '--sub_id', opts.sub)}`);
 }
 
+function revokeApproval(net, opts) {
+  const source = checkIdentityName(opts.source);
+  if (!/^C[A-Z2-7]{55}$/.test(opts.token ?? '')) throw new Error('--token must be a token contract id (starts with C).');
+  if (!/^C[A-Z2-7]{55}$/.test(opts.spender ?? '')) throw new Error('--spender must be the recurring contract id (starts with C).');
+  // Cancelling a subscription does not remove the token approval. Setting it to 0 does. A live-until
+  // ledger is required by the token, and is ignored when the amount is 0.
+  const r = stellar(
+    ['contract', 'invoke', '--id', opts.token, '--source-account', source, '--', 'approve', '--from', source, '--spender', opts.spender, '--amount', '0', '--live_until_ledger', '0'],
+    net,
+    { cost: true },
+  );
+  say(`Approval for ${opts.spender} set to 0, transaction ${parseTxHash(r.stdout + r.stderr) ?? 'unknown'}, fee ${parseFeeCharged(r.stderr) ?? 'unknown'} stroops`);
+}
+
 export function main(argv, env) {
   const [command, ...rest] = argv;
   if (command === 'build') return build();
@@ -252,7 +266,8 @@ export function main(argv, env) {
   if (command === 'create-plan') return createPlan(net, opts);
   if (command === 'cancel') return cancel(net, opts);
   if (command === 'status') return status(net, opts);
-  throw new Error('Usage: release.mjs build | deploy | create-plan | cancel | status (see the top of this file)');
+  if (command === 'revoke-approval') return revokeApproval(net, opts);
+  throw new Error('Usage: release.mjs build | deploy | create-plan | cancel | status | revoke-approval (see the top of this file)');
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
