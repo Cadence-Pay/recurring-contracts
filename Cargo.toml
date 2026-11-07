@@ -3,6 +3,7 @@ name = "recurring-contracts"
 version = "0.1.0"
 edition = "2021"
 license = "MIT"
+repository = "https://github.com/Cadence-Pay/recurring-contracts"
 publish = false
 
 [lib]

@@ -10,7 +10,7 @@ Network: Stellar testnet. Passphrase `Test SDF Network ; September 2015`, RPC `h
 
 Created 2026-11-05 with `stellar keys generate <name> --network testnet --fund`.
 
-The names carry a `recurring-` prefix because an unrelated identity called `deployer` already exists in this machine's key store. It was not touched.
+The names carry a `recurring-` prefix to keep them apart from other identities in the same key store.
 
 | Role | CLI identity | Public address |
 |---|---|---|

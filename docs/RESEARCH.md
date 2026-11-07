@@ -1,5 +1,7 @@
 # RESEARCH
 
+> This is the research log kept while the project was built in one repository, before it was split into recurring-contracts, recurring-keeper, recurring-dashboard and recurring-checkout. Mentions of the playbook, `STATUS.md` and task numbers refer to planning files of that build that are not part of this repository. The findings themselves are dated and linked to their sources.
+
 Checked: 2026-11-05. Sources are linked per item. "Verified" means I ran it or read the source text on that date. "Unverified" means I did not confirm it and the task that needs it must check first.
 
 ## Environment (task 0.1)

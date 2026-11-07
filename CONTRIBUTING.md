@@ -10,6 +10,7 @@ You need Rust (stable) with the `wasm32v1-none` target, and the [Stellar CLI](ht
 
 ```bash
 rustup target add wasm32v1-none
+git clone https://github.com/Cadence-Pay/recurring-contracts.git
 cd recurring-contracts
 cargo test
 ```
@@ -55,6 +56,8 @@ test(contracts): cover <case>
 2. Comment that you would like to take it, and wait to be assigned. One person per issue at a time.
 3. Ask questions in the issue if the scope is unclear. The scope written there is the limit of the change.
 4. Open a pull request that mentions the issue. If you stop working on it, say so, so someone else can take it.
+
+If an issue carries a Drips Wave label (for example `Stellar Wave`), it is part of a [Drips Wave](https://www.drips.network/wave) cycle. Apply for it in the Drips Wave app; the maintainers assign one applicant, there or on GitHub.
 
 ## Reporting a security problem
 

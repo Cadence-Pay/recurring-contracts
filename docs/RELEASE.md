@@ -4,7 +4,7 @@
 
 How to release Stellar Recurring to a network, step by step, using the release kit. The whole sequence has been run on **testnet** with exactly these scripts (see `DEMO.md`). It has **never been run on mainnet**.
 
-**Mainnet moves real value and cannot be undone.** Read [MAINNET_READINESS.md](MAINNET_READINESS.md) first. The kit refuses mainnet unless the owner sets `RELEASE_ALLOW_MAINNET=yes` (and `E2E_ALLOW_MAINNET=yes` for the subscribe step) on the command being run. The agent never sets them unless you have said go, and never creates, funds or looks at a mainnet key.
+**Mainnet moves real value and cannot be undone.** Read [MAINNET_READINESS.md](MAINNET_READINESS.md) first. The kit refuses mainnet unless the owner sets `RELEASE_ALLOW_MAINNET=yes` (and `E2E_ALLOW_MAINNET=yes` for the subscribe step) on the command being run.
 
 ## What the kit is
 

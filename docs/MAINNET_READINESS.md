@@ -4,7 +4,7 @@
 
 Written 2026-11-06. **No network action was taken to write this.** Nothing has been deployed to mainnet and no mainnet key has been created, seen or used. Every figure below that comes from the network was measured on **testnet** and must be measured again on mainnet before relying on it; this is marked where it matters.
 
-This is a review for you, the owner, to decide whether and when to release. The decision is yours.
+It is written for the maintainers, who decide whether and when to release.
 
 ## 1. Audit status
 
