@@ -30,6 +30,8 @@ The pages were fetched with `curl`. They render their loading state on the serve
 - creating a plan, deactivating it and cancelling a subscription with real signatures,
 - a keyboard-only walk through the pages and a screen reader.
 
+Most of these were done later by a person; see "Dashboard click-through with a real browser wallet" at the end.
+
 Those steps are in the owner's action list (kept outside the package repositories). Automated stand-ins exist: 211 dashboard tests cover the forms, the states, the wallet adapter with a fake kit, the transaction service with a fake client, the contrast of the colour tokens and a mechanical accessibility audit of every view.
 
 ### Known issues so far
@@ -141,3 +143,18 @@ The keeper's log was checked for secrets afterwards and contains none. The keepe
 ### What the rehearsal does not show
 
 It was testnet only, with the Stellar CLI signing as the subscriber (a mainnet release signs the same way with an identity the owner provides). No mainnet RPC provider, mainnet token, mainnet fees or mainnet limits were involved, and the fee and limit figures must be re-measured there.
+
+## Dashboard click-through with a real browser wallet (2026-11-09)
+
+Done by a person on testnet, in a real browser with a real wallet extension, against contract `CCUXOGU3N5HWMLRDXC5TCQ3QDA23X3RJCDXWHMBIC4SFLD2IABQT465E`, with the built keeper (read only) and the dashboard. Checked: connecting, the wrong-network warning, creating a plan, declining a signature, deactivating the plan, and keyboard-only use.
+
+| Step | Result | Transaction |
+|---|---|---|
+| Plan created from the dashboard, signed in the browser wallet | plan 3, 1 XLM every 60 s, testnet XLM | `c5a8a7fd2ef8cc1d52160235df81ccb3bebac2fab467ce2860afc2c3fe9159e3` |
+| Declined signature | nothing sent | none, as expected |
+| Plan deactivated | plan 3 inactive on-chain and in the keeper | `8e930accac8ff05c70aeb1bb035eae2febf242f808c33c554af6d3bd370a08ca` |
+| Deactivated again | accepted as a no-op (the contract ignores deactivating an inactive plan), fee paid | `52510546465c7284e940a1061edda9500cc3c4bfd16b3eb60c93ababfb928c33` |
+
+The repeat was a dashboard bug: after the first deactivation the list reloaded before the keeper's next sync, the reload discarded the success message, and the plan still showed as active with its button. The subscriber list had the same flaw for cancelling. Both are fixed in the dashboard and covered by tests. The keeper was correct throughout.
+
+Still not done by a person: cancelling a subscription through the dashboard with a real wallet, the checkout widget in a real browser, and a screen reader.

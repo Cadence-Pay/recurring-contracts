@@ -36,7 +36,7 @@ These are limits of the design as built. They are also in the package READMEs an
 - Charges can fail for reasons the contract does not tell apart (`PaymentFailed`: low balance, low or expired allowance, or the token refusing).
 - A failed charge is not recorded on-chain; failure tracking is off-chain in the keeper. There is no on-chain grace period.
 - Webhooks have only been tested against fake receivers.
-- The keeper and the dashboard have never been used by a person with a real wallet in a browser (the owner's action list (kept outside the package repositories)).
+- The dashboard has been used by a person with a real wallet in a browser on testnet (create and deactivate a plan, 2026-11-09, see `DEMO.md`). Cancelling through the dashboard and the checkout widget have not been tried by a person.
 - Several keepers can run, but they will race for the same charge and the losers waste a fee.
 - No personal data is on-chain. The keeper stores addresses, ids, amounts, timestamps and status only.
 
